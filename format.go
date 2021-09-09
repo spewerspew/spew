@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -22,6 +23,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // supportedFlags is a list of all the character flags supported by fmt package.
@@ -386,15 +388,42 @@ func (f *formatState) Format(fs fmt.State, verb rune) {
 		return
 	}
 
+	f.pointers = pointersMapGet()
+	defer func() {
+		m := f.pointers
+		f.pointers = nil
+		pointersMapPut(m)
+	}()
+
 	f.format(reflect.ValueOf(f.value))
+}
+
+var pointersMapPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[uintptr]int)
+	},
+}
+
+func pointersMapPut(m map[uintptr]int) { pointersMapPool.Put(m) }
+func pointersMapGet() map[uintptr]int {
+	m := pointersMapPool.Get().(map[uintptr]int)
+	for k := range m {
+		delete(m, k)
+	}
+	return m
 }
 
 // newFormatter is a helper function to consolidate the logic from the various
 // public methods which take varying config states.
 func newFormatter(cs *ConfigState, v interface{}) fmt.Formatter {
-	fs := &formatState{value: v, cs: cs}
-	fs.pointers = make(map[uintptr]int)
-	return fs
+	var f formatState
+	f.Reset(cs, v)
+	return &f
+}
+
+// Reset resets the formatter state.
+func (f *formatState) Reset(cs *ConfigState, v interface{}) {
+	*f = formatState{value: v, cs: cs}
 }
 
 /*
@@ -416,4 +445,30 @@ Printf, Println, or Fprintf.
 */
 func NewFormatter(v interface{}) fmt.Formatter {
 	return newFormatter(&Config, v)
+}
+
+func useFormatter(v interface{}) fmt.Formatter {
+	f := formatterPool.Get().(*formatState)
+	f.Reset(&Config, v)
+	return f
+}
+
+var formatterPool = sync.Pool{
+	New: func() interface{} {
+		return new(formatState)
+	},
+}
+
+func formattersGet(args []interface{}) (formatters []interface{}) {
+	formatters = make([]interface{}, len(args))
+	for i, arg := range args {
+		formatters[i] = useFormatter(arg)
+	}
+	return formatters
+}
+
+func formattersPut(formatters []interface{}) {
+	for _, f := range formatters {
+		formatterPool.Put(f)
+	}
 }
