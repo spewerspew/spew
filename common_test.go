@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -19,6 +20,7 @@ package spew_test
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/dwlnetnl/spew"
@@ -295,4 +297,47 @@ func TestSortValuesWithSpew(t *testing.T) {
 	}
 	cs := spew.ConfigState{DisableMethods: true, SpewKeys: true}
 	helpTestSortValues(tests, &cs, t)
+}
+
+func typeNameOf(v interface{}) string {
+	rv := reflect.ValueOf(v)
+
+	if rv.Kind() == reflect.Invalid {
+		return "nil"
+	}
+
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return rv.Type().Elem().Name()
+		}
+		rv = rv.Elem()
+	}
+
+	return rv.Type().Name()
+}
+
+func uniqueStringSlice(s []string) []string {
+	sort.Strings(s)
+
+	i := 0
+	for j := 0; j < len(s); j++ {
+		if !(s[i] < s[j]) {
+			continue
+		}
+		i++
+		s[i] = s[j]
+	}
+
+	i++
+	return s[:i]
+}
+
+func TestUniqueStringSlice(t *testing.T) {
+	in := []string{"x", "k", "y", "m", "a", "x", "x", "y"}
+	want := []string{"a", "k", "m", "x", "y"}
+
+	got := uniqueStringSlice(in)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v, want: %#v", got, want)
+	}
 }

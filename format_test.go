@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -69,6 +70,7 @@ package spew_test
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"testing"
 	"unsafe"
 
@@ -80,15 +82,16 @@ type formatterTest struct {
 	format string
 	in     interface{}
 	wants  []string
+	typ    string
 }
 
 // formatterTests houses all of the tests to be performed against NewFormatter.
-var formatterTests = make([]formatterTest, 0)
+var formatterTests []formatterTest
 
 // addFormatterTest is a helper method to append the passed input and desired
 // result to formatterTests.
 func addFormatterTest(format string, in interface{}, wants ...string) {
-	test := formatterTest{format, in, wants}
+	test := formatterTest{format, in, wants, typeNameOf(in)}
 	formatterTests = append(formatterTests, test)
 }
 
@@ -1461,28 +1464,34 @@ func addPassthroughFormatterTests() {
 	addFormatterTest("%q", "test", "\"test\"")
 }
 
+func setupFormatterTests() {
+	if len(formatterTests) == 0 {
+		// Setup tests.
+		addIntFormatterTests()
+		addUintFormatterTests()
+		addBoolFormatterTests()
+		addFloatFormatterTests()
+		addComplexFormatterTests()
+		addArrayFormatterTests()
+		addSliceFormatterTests()
+		addStringFormatterTests()
+		addInterfaceFormatterTests()
+		addMapFormatterTests()
+		addStructFormatterTests()
+		addUintptrFormatterTests()
+		addUnsafePointerFormatterTests()
+		addChanFormatterTests()
+		addFuncFormatterTests()
+		addCircularFormatterTests()
+		addPanicFormatterTests()
+		addErrorFormatterTests()
+		addPassthroughFormatterTests()
+	}
+}
+
 // TestFormatter executes all of the tests described by formatterTests.
 func TestFormatter(t *testing.T) {
-	// Setup tests.
-	addIntFormatterTests()
-	addUintFormatterTests()
-	addBoolFormatterTests()
-	addFloatFormatterTests()
-	addComplexFormatterTests()
-	addArrayFormatterTests()
-	addSliceFormatterTests()
-	addStringFormatterTests()
-	addInterfaceFormatterTests()
-	addMapFormatterTests()
-	addStructFormatterTests()
-	addUintptrFormatterTests()
-	addUnsafePointerFormatterTests()
-	addChanFormatterTests()
-	addFuncFormatterTests()
-	addCircularFormatterTests()
-	addPanicFormatterTests()
-	addErrorFormatterTests()
-	addPassthroughFormatterTests()
+	setupFormatterTests()
 
 	t.Logf("Running %d tests", len(formatterTests))
 	for i, test := range formatterTests {
@@ -1494,6 +1503,33 @@ func TestFormatter(t *testing.T) {
 				stringizeWants(test.wants))
 			continue
 		}
+	}
+}
+
+func BenchmarkFormatter(b *testing.B) {
+	setupFormatterTests()
+
+	var formats []string
+	cases := make(map[string][]formatterTest)
+	for _, t := range formatterTests {
+		formats = append(formats, t.format)
+		cases[t.format] = append(cases[t.format], t)
+	}
+
+	b.Logf("Running %d benchmarks", len(formatterTests))
+	for _, format := range uniqueStringSlice(formats) {
+		b.Run(format, func(b *testing.B) {
+			for _, test := range cases[format] {
+				name := test.typ + "/" + test.wants[0]
+				b.Run(name, func(b *testing.B) {
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						spew.Fprintf(io.Discard, test.format, test.in)
+					}
+				})
+			}
+		})
 	}
 }
 
