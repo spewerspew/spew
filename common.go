@@ -252,7 +252,7 @@ func printHexPtrBufGet() *[18]byte {
 // elements to be sorted.
 type valuesSorter struct {
 	values  []reflect.Value
-	strings []string // either nil or same len and values
+	strings []string // either nil or same len as values
 	cs      *ConfigState
 }
 
@@ -267,7 +267,7 @@ func newValuesSorter(values []reflect.Value, cs *ConfigState) sort.Interface {
 	if !cs.DisableMethods {
 		vs.strings = make([]string, len(values))
 		for i := range vs.values {
-			b := bytes.Buffer{}
+			var b bytes.Buffer
 			if !handleMethods(cs, &b, vs.values[i]) {
 				vs.strings = nil
 				break
@@ -389,15 +389,15 @@ func pointersMapGet() map[uintptr]int {
 	return m
 }
 
-var stringsBuilderPool = sync.Pool{
+var bytesBufferPool = sync.Pool{
 	New: func() interface{} {
 		return new(bytes.Buffer)
 	},
 }
 
-func bytesBufferPut(b *bytes.Buffer) { stringsBuilderPool.Put(b) }
+func bytesBufferPut(b *bytes.Buffer) { bytesBufferPool.Put(b) }
 func bytesBufferGet() *bytes.Buffer {
-	b := stringsBuilderPool.Get().(*bytes.Buffer)
+	b := bytesBufferPool.Get().(*bytes.Buffer)
 	b.Reset()
 	return b
 }

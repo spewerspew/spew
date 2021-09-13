@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,7 +18,6 @@
 package spew
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -113,7 +113,9 @@ var Config = ConfigState{Indent: " "}
 //
 //	fmt.Errorf(format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Errorf(format string, a ...interface{}) (err error) {
-	return fmt.Errorf(format, c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Errorf(format, formatters...)
 }
 
 // Fprint is a wrapper for fmt.Fprint that treats each argument as if it were
@@ -125,7 +127,9 @@ func (c *ConfigState) Errorf(format string, a ...interface{}) (err error) {
 //
 //	fmt.Fprint(w, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Fprint(w io.Writer, a ...interface{}) (n int, err error) {
-	return fmt.Fprint(w, c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Fprint(w, formatters...)
 }
 
 // Fprintf is a wrapper for fmt.Fprintf that treats each argument as if it were
@@ -137,7 +141,9 @@ func (c *ConfigState) Fprint(w io.Writer, a ...interface{}) (n int, err error) {
 //
 //	fmt.Fprintf(w, format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Fprintf(w io.Writer, format string, a ...interface{}) (n int, err error) {
-	return fmt.Fprintf(w, format, c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Fprintf(w, format, formatters...)
 }
 
 // Fprintln is a wrapper for fmt.Fprintln that treats each argument as if it
@@ -148,7 +154,9 @@ func (c *ConfigState) Fprintf(w io.Writer, format string, a ...interface{}) (n i
 //
 //	fmt.Fprintln(w, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Fprintln(w io.Writer, a ...interface{}) (n int, err error) {
-	return fmt.Fprintln(w, c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Fprintln(w, formatters...)
 }
 
 // Print is a wrapper for fmt.Print that treats each argument as if it were
@@ -160,7 +168,9 @@ func (c *ConfigState) Fprintln(w io.Writer, a ...interface{}) (n int, err error)
 //
 //	fmt.Print(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Print(a ...interface{}) (n int, err error) {
-	return fmt.Print(c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Print(formatters...)
 }
 
 // Printf is a wrapper for fmt.Printf that treats each argument as if it were
@@ -172,7 +182,9 @@ func (c *ConfigState) Print(a ...interface{}) (n int, err error) {
 //
 //	fmt.Printf(format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Printf(format string, a ...interface{}) (n int, err error) {
-	return fmt.Printf(format, c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Printf(format, formatters...)
 }
 
 // Println is a wrapper for fmt.Println that treats each argument as if it were
@@ -184,7 +196,9 @@ func (c *ConfigState) Printf(format string, a ...interface{}) (n int, err error)
 //
 //	fmt.Println(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Println(a ...interface{}) (n int, err error) {
-	return fmt.Println(c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Println(formatters...)
 }
 
 // Sprint is a wrapper for fmt.Sprint that treats each argument as if it were
@@ -195,7 +209,9 @@ func (c *ConfigState) Println(a ...interface{}) (n int, err error) {
 //
 //	fmt.Sprint(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Sprint(a ...interface{}) string {
-	return fmt.Sprint(c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Sprint(formatters...)
 }
 
 // Sprintf is a wrapper for fmt.Sprintf that treats each argument as if it were
@@ -206,7 +222,9 @@ func (c *ConfigState) Sprint(a ...interface{}) string {
 //
 //	fmt.Sprintf(format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Sprintf(format string, a ...interface{}) string {
-	return fmt.Sprintf(format, c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Sprintf(format, formatters...)
 }
 
 // Sprintln is a wrapper for fmt.Sprintln that treats each argument as if it
@@ -217,7 +235,9 @@ func (c *ConfigState) Sprintf(format string, a ...interface{}) string {
 //
 //	fmt.Sprintln(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Sprintln(a ...interface{}) string {
-	return fmt.Sprintln(c.convertArgs(a)...)
+	formatters := formattersGet(c, a)
+	defer formattersPut(formatters)
+	return fmt.Sprintln(formatters...)
 }
 
 /*
@@ -277,20 +297,10 @@ func (c *ConfigState) Dump(a ...interface{}) {
 // Sdump returns a string with the passed arguments formatted exactly the same
 // as Dump.
 func (c *ConfigState) Sdump(a ...interface{}) string {
-	var buf bytes.Buffer
-	fdump(c, &buf, a...)
+	buf := bytesBufferGet()
+	defer bytesBufferPut(buf)
+	fdump(c, buf, a...)
 	return buf.String()
-}
-
-// convertArgs accepts a slice of arguments and returns a slice of the same
-// length with each argument converted to a spew Formatter interface using
-// the ConfigState associated with s.
-func (c *ConfigState) convertArgs(args []interface{}) (formatters []interface{}) {
-	formatters = make([]interface{}, len(args))
-	for index, arg := range args {
-		formatters[index] = newFormatter(c, arg)
-	}
-	return formatters
 }
 
 // NewDefaultConfig returns a ConfigState with the following default settings.

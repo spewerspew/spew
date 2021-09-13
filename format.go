@@ -120,7 +120,7 @@ func (f *formatState) formatPtr(v reflect.Value) {
 	}
 
 	// Keep list of all dereferenced pointers to possibly show later.
-	pointerChain := make([]uintptr, 0)
+	pointerChain := make([]uintptr, 0, 2)
 
 	// Figure out how many levels of indirection there are by derferencing
 	// pointers and unpacking interfaces down the chain while detecting circular
@@ -435,22 +435,18 @@ func NewFormatter(v interface{}) fmt.Formatter {
 	return newFormatter(&Config, v)
 }
 
-func useFormatter(v interface{}) fmt.Formatter {
-	f := formatterPool.Get().(*formatState)
-	f.Reset(&Config, v)
-	return f
-}
-
 var formatterPool = sync.Pool{
 	New: func() interface{} {
 		return new(formatState)
 	},
 }
 
-func formattersGet(args []interface{}) (formatters []interface{}) {
+func formattersGet(cs *ConfigState, args []interface{}) (formatters []interface{}) {
 	formatters = make([]interface{}, len(args))
 	for i, arg := range args {
-		formatters[i] = useFormatter(arg)
+		f := formatterPool.Get().(*formatState)
+		f.Reset(cs, arg)
+		formatters[i] = f
 	}
 	return formatters
 }

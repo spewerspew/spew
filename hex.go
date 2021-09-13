@@ -10,8 +10,6 @@ import (
 	"sync"
 )
 
-const rightCharsLen = 18
-
 var hexDumperPool = sync.Pool{
 	New: func() interface{} {
 		return new(hexDumper)
