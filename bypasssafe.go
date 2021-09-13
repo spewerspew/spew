@@ -1,4 +1,5 @@
 // Copyright (c) 2015-2016 Dave Collins <dave@davec.name>
+// Copyright (c) 2021 Anner van Hardenbroek
 //
 // Permission to use, copy, modify, and distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -16,7 +17,8 @@
 // when the code is running on Google App Engine, compiled by GopherJS, or
 // "-tags safe" is added to the go build command line.  The "disableunsafe"
 // tag is deprecated and thus should not be used.
-// +build js appengine safe disableunsafe !go1.4
+//go:build js || appengine || safe || purego || disableunsafe || !go1.4
+// +build js appengine safe purego disableunsafe !go1.4
 
 package spew
 
