@@ -113,8 +113,8 @@ var Config = ConfigState{Indent: " "}
 //
 //	fmt.Errorf(format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Errorf(format string, a ...interface{}) (err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Errorf(format, formatters...)
 }
 
@@ -127,8 +127,8 @@ func (c *ConfigState) Errorf(format string, a ...interface{}) (err error) {
 //
 //	fmt.Fprint(w, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Fprint(w io.Writer, a ...interface{}) (n int, err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Fprint(w, formatters...)
 }
 
@@ -141,8 +141,8 @@ func (c *ConfigState) Fprint(w io.Writer, a ...interface{}) (n int, err error) {
 //
 //	fmt.Fprintf(w, format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Fprintf(w io.Writer, format string, a ...interface{}) (n int, err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Fprintf(w, format, formatters...)
 }
 
@@ -154,8 +154,8 @@ func (c *ConfigState) Fprintf(w io.Writer, format string, a ...interface{}) (n i
 //
 //	fmt.Fprintln(w, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Fprintln(w io.Writer, a ...interface{}) (n int, err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Fprintln(w, formatters...)
 }
 
@@ -168,8 +168,8 @@ func (c *ConfigState) Fprintln(w io.Writer, a ...interface{}) (n int, err error)
 //
 //	fmt.Print(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Print(a ...interface{}) (n int, err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Print(formatters...)
 }
 
@@ -182,8 +182,8 @@ func (c *ConfigState) Print(a ...interface{}) (n int, err error) {
 //
 //	fmt.Printf(format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Printf(format string, a ...interface{}) (n int, err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Printf(format, formatters...)
 }
 
@@ -196,8 +196,8 @@ func (c *ConfigState) Printf(format string, a ...interface{}) (n int, err error)
 //
 //	fmt.Println(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Println(a ...interface{}) (n int, err error) {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Println(formatters...)
 }
 
@@ -209,8 +209,8 @@ func (c *ConfigState) Println(a ...interface{}) (n int, err error) {
 //
 //	fmt.Sprint(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Sprint(a ...interface{}) string {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Sprint(formatters...)
 }
 
@@ -222,8 +222,8 @@ func (c *ConfigState) Sprint(a ...interface{}) string {
 //
 //	fmt.Sprintf(format, c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Sprintf(format string, a ...interface{}) string {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Sprintf(format, formatters...)
 }
 
@@ -235,8 +235,8 @@ func (c *ConfigState) Sprintf(format string, a ...interface{}) string {
 //
 //	fmt.Sprintln(c.NewFormatter(a), c.NewFormatter(b))
 func (c *ConfigState) Sprintln(a ...interface{}) string {
-	formatters := formattersGet(c, a)
-	defer formattersPut(formatters)
+	pv, formatters := formattersGet(c, a)
+	defer formattersPut(pv)
 	return fmt.Sprintln(formatters...)
 }
 

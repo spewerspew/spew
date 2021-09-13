@@ -435,24 +435,33 @@ func NewFormatter(v interface{}) fmt.Formatter {
 	return newFormatter(&Config, v)
 }
 
-var formatterPool = sync.Pool{
-	New: func() interface{} {
-		return new(formatState)
-	},
-}
+var formattersPool sync.Pool
 
-func formattersGet(cs *ConfigState, args []interface{}) (formatters []interface{}) {
-	formatters = make([]interface{}, len(args))
+func formattersGet(cs *ConfigState, args []interface{}) (pv interface{}, formatters []interface{}) {
+	pv = formattersPool.Get()
+	if pv != nil {
+		formatters = pv.([]interface{})
+		if len(formatters) < len(args) {
+			formattersPool.Put(pv)
+			pv = nil
+		}
+	}
+	if pv == nil {
+		pv = make([]interface{}, len(args))
+		formatters = pv.([]interface{})
+		for i := 0; i < len(args); i++ {
+			formatters[i] = new(formatState)
+		}
+	}
+	if len(formatters) > len(args) {
+		formatters = formatters[:len(args)]
+	}
 	for i, arg := range args {
-		f := formatterPool.Get().(*formatState)
-		f.Reset(cs, arg)
-		formatters[i] = f
+		formatters[i].(*formatState).Reset(cs, arg)
 	}
-	return formatters
+	return pv, formatters
 }
 
-func formattersPut(formatters []interface{}) {
-	for _, f := range formatters {
-		formatterPool.Put(f)
-	}
+func formattersPut(pv interface{}) {
+	formattersPool.Put(pv)
 }
