@@ -302,18 +302,23 @@ func TestSortValuesWithSpew(t *testing.T) {
 func typeNameOf(v interface{}) string {
 	rv := reflect.ValueOf(v)
 
-	if rv.Kind() == reflect.Invalid {
+	switch rv.Kind() {
+	case reflect.Invalid:
 		return "nil"
-	}
 
-	for rv.Kind() == reflect.Ptr {
-		if rv.IsNil() {
-			return rv.Type().Elem().Name()
+	case reflect.Ptr:
+		for rv.Kind() == reflect.Ptr {
+			if rv.IsNil() {
+				return rv.Type().Elem().String()
+			}
+			rv = rv.Elem()
 		}
-		rv = rv.Elem()
+
+	case reflect.Array, reflect.Slice:
+		return rv.Type().String()
 	}
 
-	return rv.Type().Name()
+	return rv.Type().String()
 }
 
 func uniqueStringSlice(s []string) []string {

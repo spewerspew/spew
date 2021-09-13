@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -64,6 +65,8 @@ package spew_test
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -74,15 +77,16 @@ import (
 type dumpTest struct {
 	in    interface{}
 	wants []string
+	typ   string
 }
 
 // dumpTests houses all of the tests to be performed against the Dump method.
-var dumpTests = make([]dumpTest, 0)
+var dumpTests []dumpTest
 
 // addDumpTest is a helper method to append the passed input and desired result
 // to dumpTests
 func addDumpTest(in interface{}, wants ...string) {
-	test := dumpTest{in, wants}
+	test := dumpTest{in, wants, typeNameOf(in)}
 	dumpTests = append(dumpTests, test)
 }
 
@@ -956,28 +960,33 @@ func addErrorDumpTests() {
 	addDumpTest(nv, "(*"+vt+")(<nil>)\n")
 }
 
+func setupDumpTests() {
+	if len(dumpTests) == 0 {
+		addIntDumpTests()
+		addUintDumpTests()
+		addBoolDumpTests()
+		addFloatDumpTests()
+		addComplexDumpTests()
+		addArrayDumpTests()
+		addSliceDumpTests()
+		addStringDumpTests()
+		addInterfaceDumpTests()
+		addMapDumpTests()
+		addStructDumpTests()
+		addUintptrDumpTests()
+		addUnsafePointerDumpTests()
+		addChanDumpTests()
+		addFuncDumpTests()
+		addCircularDumpTests()
+		addPanicDumpTests()
+		addErrorDumpTests()
+		addCgoDumpTests()
+	}
+}
+
 // TestDump executes all of the tests described by dumpTests.
 func TestDump(t *testing.T) {
-	// Setup tests.
-	addIntDumpTests()
-	addUintDumpTests()
-	addBoolDumpTests()
-	addFloatDumpTests()
-	addComplexDumpTests()
-	addArrayDumpTests()
-	addSliceDumpTests()
-	addStringDumpTests()
-	addInterfaceDumpTests()
-	addMapDumpTests()
-	addStructDumpTests()
-	addUintptrDumpTests()
-	addUnsafePointerDumpTests()
-	addChanDumpTests()
-	addFuncDumpTests()
-	addCircularDumpTests()
-	addPanicDumpTests()
-	addErrorDumpTests()
-	addCgoDumpTests()
+	setupDumpTests()
 
 	t.Logf("Running %d tests", len(dumpTests))
 	for i, test := range dumpTests {
@@ -988,6 +997,23 @@ func TestDump(t *testing.T) {
 			t.Errorf("Dump #%d\n got: %s %s", i, s, stringizeWants(test.wants))
 			continue
 		}
+	}
+}
+
+func BenchmarkDump(b *testing.B) {
+	setupDumpTests()
+
+	b.Logf("Running %d benchmarks", len(dumpTests))
+	for _, test := range dumpTests {
+		s := test.wants[0]
+		name := test.typ + "/" + s[:strings.IndexByte(s, '\n')]
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				spew.Fdump(io.Discard, test.in)
+			}
+		})
 	}
 }
 

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -23,6 +24,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"sync"
 )
 
 // Some constants in the form of bytes to avoid string overhead.  This mirrors
@@ -116,25 +118,24 @@ func handleMethods(cs *ConfigState, w io.Writer, v reflect.Value) (handled bool)
 		defer catchPanic(w, v)
 		if cs.ContinueOnMethod {
 			w.Write(openParenBytes)
-			w.Write([]byte(iface.Error()))
+			io.WriteString(w, iface.Error())
 			w.Write(closeParenBytes)
 			w.Write(spaceBytes)
 			return false
 		}
-
-		w.Write([]byte(iface.Error()))
+		io.WriteString(w, iface.Error())
 		return true
 
 	case fmt.Stringer:
 		defer catchPanic(w, v)
 		if cs.ContinueOnMethod {
 			w.Write(openParenBytes)
-			w.Write([]byte(iface.String()))
+			io.WriteString(w, iface.String())
 			w.Write(closeParenBytes)
 			w.Write(spaceBytes)
 			return false
 		}
-		w.Write([]byte(iface.String()))
+		io.WriteString(w, iface.String())
 		return true
 	}
 	return false
@@ -151,33 +152,55 @@ func printBool(w io.Writer, val bool) {
 
 // printInt outputs a signed integer value to Writer w.
 func printInt(w io.Writer, val int64, base int) {
-	w.Write([]byte(strconv.FormatInt(val, base)))
+	pv, buf := strconvBufPoolGet()
+	defer strconvBufPool.Put(pv)
+	w.Write(strconv.AppendInt(buf, val, base))
 }
 
 // printUint outputs an unsigned integer value to Writer w.
 func printUint(w io.Writer, val uint64, base int) {
-	w.Write([]byte(strconv.FormatUint(val, base)))
+	pv, buf := strconvBufPoolGet()
+	defer strconvBufPool.Put(pv)
+	w.Write(strconv.AppendUint(buf, val, base))
 }
 
 // printFloat outputs a floating point value using the specified precision,
 // which is expected to be 32 or 64bit, to Writer w.
 func printFloat(w io.Writer, val float64, precision int) {
-	w.Write([]byte(strconv.FormatFloat(val, 'g', -1, precision)))
+	pv, buf := strconvBufPoolGet()
+	defer strconvBufPool.Put(pv)
+	w.Write(strconv.AppendFloat(buf, val, 'g', -1, precision))
 }
 
 // printComplex outputs a complex value using the specified float precision
 // for the real and imaginary parts to Writer w.
 func printComplex(w io.Writer, c complex128, floatPrecision int) {
+	pv, buf := strconvBufPoolGet()
+	defer strconvBufPool.Put(pv)
 	r := real(c)
 	w.Write(openParenBytes)
-	w.Write([]byte(strconv.FormatFloat(r, 'g', -1, floatPrecision)))
+	w.Write(strconv.AppendFloat(buf, r, 'g', -1, floatPrecision))
 	i := imag(c)
 	if i >= 0 {
 		w.Write(plusBytes)
 	}
-	w.Write([]byte(strconv.FormatFloat(i, 'g', -1, floatPrecision)))
+	buf = buf[:0]
+	w.Write(strconv.AppendFloat(buf, i, 'g', -1, floatPrecision))
 	w.Write(iBytes)
 	w.Write(closeParenBytes)
+}
+
+var strconvBufPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 0, 64)
+	},
+}
+
+func strconvBufPoolGet() (interface{}, []byte) {
+	pv := strconvBufPool.Get()
+	buf := pv.([]byte)
+	buf = buf[:0]
+	return pv, buf
 }
 
 // printHexPtr outputs a uintptr formatted as hexadecimal with a leading '0x'
@@ -191,7 +214,8 @@ func printHexPtr(w io.Writer, p uintptr) {
 	}
 
 	// Max uint64 is 16 bytes in hex + 2 bytes for '0x' prefix
-	buf := make([]byte, 18)
+	buf := printHexPtrBufGet() // *[18]byte
+	defer printHexPtrBufPut(buf)
 
 	// It's simpler to construct the hex string right to left.
 	base := uint64(16)
@@ -209,9 +233,19 @@ func printHexPtr(w io.Writer, p uintptr) {
 	i--
 	buf[i] = '0'
 
-	// Strip unused leading bytes.
-	buf = buf[i:]
-	w.Write(buf)
+	// Strip unused leading bytes and write.
+	w.Write(buf[i:])
+}
+
+var printHexPtrBufPool = sync.Pool{
+	New: func() interface{} {
+		return new([18]byte)
+	},
+}
+
+func printHexPtrBufPut(buf *[18]byte) { printHexPtrBufPool.Put(buf) }
+func printHexPtrBufGet() *[18]byte {
+	return printHexPtrBufPool.Get().(*[18]byte)
 }
 
 // valuesSorter implements sort.Interface to allow a slice of reflect.Value
@@ -338,4 +372,32 @@ func sortValues(values []reflect.Value, cs *ConfigState) {
 		return
 	}
 	sort.Sort(newValuesSorter(values, cs))
+}
+
+var pointersMapPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[uintptr]int)
+	},
+}
+
+func pointersMapPut(m map[uintptr]int) { pointersMapPool.Put(m) }
+func pointersMapGet() map[uintptr]int {
+	m := pointersMapPool.Get().(map[uintptr]int)
+	for k := range m {
+		delete(m, k)
+	}
+	return m
+}
+
+var stringsBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
+func bytesBufferPut(b *bytes.Buffer) { stringsBuilderPool.Put(b) }
+func bytesBufferGet() *bytes.Buffer {
+	b := stringsBuilderPool.Get().(*bytes.Buffer)
+	b.Reset()
+	return b
 }

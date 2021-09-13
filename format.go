@@ -20,6 +20,7 @@ package spew
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"reflect"
 	"strconv"
 	"strings"
@@ -47,7 +48,8 @@ type formatState struct {
 // unrecognized type.  Unless new types are added to the language, this
 // function won't ever be called.
 func (f *formatState) buildDefaultFormat() (format string) {
-	buf := bytes.NewBuffer(percentBytes)
+	var buf bytes.Buffer
+	buf.Write(percentBytes)
 
 	for _, flag := range supportedFlags {
 		if f.fs.Flag(int(flag)) {
@@ -56,16 +58,15 @@ func (f *formatState) buildDefaultFormat() (format string) {
 	}
 
 	buf.WriteRune('v')
-
-	format = buf.String()
-	return format
+	return buf.String()
 }
 
 // constructOrigFormat recreates the original format string including precision
 // and width information to pass along to the standard fmt package.  This allows
 // automatic deferral of all format strings this package doesn't support.
 func (f *formatState) constructOrigFormat(verb rune) (format string) {
-	buf := bytes.NewBuffer(percentBytes)
+	var buf bytes.Buffer
+	buf.Write(percentBytes)
 
 	for _, flag := range supportedFlags {
 		if f.fs.Flag(int(flag)) {
@@ -83,9 +84,7 @@ func (f *formatState) constructOrigFormat(verb rune) (format string) {
 	}
 
 	buf.WriteRune(verb)
-
-	format = buf.String()
-	return format
+	return buf.String()
 }
 
 // unpackValue returns values inside of non-nil interfaces when possible and
@@ -158,15 +157,19 @@ func (f *formatState) formatPtr(v reflect.Value) {
 	// Display type or indirection level depending on flags.
 	if showTypes && !f.ignoreNextType {
 		f.fs.Write(openParenBytes)
-		f.fs.Write(bytes.Repeat(asteriskBytes, indirects))
-		f.fs.Write([]byte(ve.Type().String()))
+		for i := 0; i < indirects; i++ {
+			f.fs.Write(asteriskBytes)
+		}
+		io.WriteString(f.fs, ve.Type().String())
 		f.fs.Write(closeParenBytes)
 	} else {
 		if nilFound || cycleFound {
 			indirects += strings.Count(ve.Type().String(), "*")
 		}
 		f.fs.Write(openAngleBytes)
-		f.fs.Write([]byte(strings.Repeat("*", indirects)))
+		for i := 0; i < indirects; i++ {
+			io.WriteString(f.fs, "*")
+		}
 		f.fs.Write(closeAngleBytes)
 	}
 
@@ -217,7 +220,7 @@ func (f *formatState) format(v reflect.Value) {
 	// Print type information unless already handled elsewhere.
 	if !f.ignoreNextType && f.fs.Flag('#') {
 		f.fs.Write(openParenBytes)
-		f.fs.Write([]byte(v.Type().String()))
+		io.WriteString(f.fs, v.Type().String())
 		f.fs.Write(closeParenBytes)
 	}
 	f.ignoreNextType = false
@@ -284,7 +287,7 @@ func (f *formatState) format(v reflect.Value) {
 		f.fs.Write(closeBracketBytes)
 
 	case reflect.String:
-		f.fs.Write([]byte(v.String()))
+		io.WriteString(f.fs, v.String())
 
 	case reflect.Interface:
 		// The only time we should get here is for nil interfaces due to
@@ -341,7 +344,7 @@ func (f *formatState) format(v reflect.Value) {
 				}
 				vtf := vt.Field(i)
 				if f.fs.Flag('+') || f.fs.Flag('#') {
-					f.fs.Write([]byte(vtf.Name))
+					io.WriteString(f.fs, vtf.Name)
 					f.fs.Write(colonBytes)
 				}
 				f.format(f.unpackValue(v.Field(i)))
@@ -396,21 +399,6 @@ func (f *formatState) Format(fs fmt.State, verb rune) {
 	}()
 
 	f.format(reflect.ValueOf(f.value))
-}
-
-var pointersMapPool = sync.Pool{
-	New: func() interface{} {
-		return make(map[uintptr]int)
-	},
-}
-
-func pointersMapPut(m map[uintptr]int) { pointersMapPool.Put(m) }
-func pointersMapGet() map[uintptr]int {
-	m := pointersMapPool.Get().(map[uintptr]int)
-	for k := range m {
-		delete(m, k)
-	}
-	return m
 }
 
 // newFormatter is a helper function to consolidate the logic from the various

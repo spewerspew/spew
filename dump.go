@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Dave Collins <dave@davec.name>
+ * Copyright (c) 2021 Anner van Hardenbroek
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -18,14 +19,12 @@ package spew
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 var (
@@ -64,7 +63,9 @@ func (d *dumpState) indent() {
 		d.ignoreNextIndent = false
 		return
 	}
-	d.w.Write(bytes.Repeat([]byte(d.cs.Indent), d.depth))
+	for i := 0; i < d.depth; i++ {
+		io.WriteString(d.w, d.cs.Indent)
+	}
 }
 
 // unpackValue returns values inside of non-nil interfaces when possible.
@@ -88,7 +89,7 @@ func (d *dumpState) dumpPtr(v reflect.Value) {
 	}
 
 	// Keep list of all dereferenced pointers to show later.
-	pointerChain := make([]uintptr, 0)
+	pointerChain := make([]uintptr, 0, 2)
 
 	// Figure out how many levels of indirection there are by dereferencing
 	// pointers and unpacking interfaces down the chain while detecting circular
@@ -124,8 +125,10 @@ func (d *dumpState) dumpPtr(v reflect.Value) {
 
 	// Display type information.
 	d.w.Write(openParenBytes)
-	d.w.Write(bytes.Repeat(asteriskBytes, indirects))
-	d.w.Write([]byte(ve.Type().String()))
+	for i := 0; i < indirects; i++ {
+		d.w.Write(asteriskBytes)
+	}
+	io.WriteString(d.w, ve.Type().String())
 	d.w.Write(closeParenBytes)
 
 	// Display pointer information.
@@ -225,11 +228,26 @@ func (d *dumpState) dumpSlice(v reflect.Value) {
 
 	// Hexdump the entire slice as needed.
 	if doHexDump {
-		indent := strings.Repeat(d.cs.Indent, d.depth)
-		str := indent + hex.Dump(buf)
-		str = strings.Replace(str, "\n", "\n"+indent, -1)
-		str = strings.TrimRight(str, d.cs.Indent)
-		d.w.Write([]byte(str))
+		b := bytesBufferGet()
+		defer bytesBufferPut(b)
+
+		for i := 0; i < d.depth; i++ {
+			b.WriteString(d.cs.Indent)
+		}
+
+		indent := b.String()
+		b.Reset()
+
+		// hexDump will write 79 bytes per complete 16 byte chunk plus,
+		// the indent and at least 64 bytes for whatever remains. Round
+		// the allocation up, since only a maximum of 15 bytes will be
+		// wasted.
+		n := (1 + ((len(buf) - 1) / 16)) * (79 + len(d.cs.Indent)*d.depth)
+		b.Grow(n)
+
+		hexDump(b, buf, indent)
+
+		io.Copy(d.w, b)
 		return
 	}
 
@@ -267,7 +285,7 @@ func (d *dumpState) dump(v reflect.Value) {
 	if !d.ignoreNextType {
 		d.indent()
 		d.w.Write(openParenBytes)
-		d.w.Write([]byte(v.Type().String()))
+		io.WriteString(d.w, v.Type().String())
 		d.w.Write(closeParenBytes)
 		d.w.Write(spaceBytes)
 	}
@@ -356,7 +374,9 @@ func (d *dumpState) dump(v reflect.Value) {
 		d.w.Write(closeBraceBytes)
 
 	case reflect.String:
-		d.w.Write([]byte(strconv.Quote(v.String())))
+		pv, buf := strconvBufPoolGet()
+		defer strconvBufPool.Put(pv)
+		d.w.Write(strconv.AppendQuote(buf, v.String()))
 
 	case reflect.Interface:
 		// The only time we should get here is for nil interfaces due to
@@ -415,7 +435,7 @@ func (d *dumpState) dump(v reflect.Value) {
 			for i := 0; i < numFields; i++ {
 				d.indent()
 				vtf := vt.Field(i)
-				d.w.Write([]byte(vtf.Name))
+				io.WriteString(d.w, vtf.Name)
 				d.w.Write(colonSpaceBytes)
 				d.ignoreNextIndent = true
 				d.dump(d.unpackValue(v.Field(i)))
@@ -451,6 +471,10 @@ func (d *dumpState) dump(v reflect.Value) {
 // fdump is a helper function to consolidate the logic from the various public
 // methods which take varying writers and config states.
 func fdump(cs *ConfigState, w io.Writer, a ...interface{}) {
+	d := dumpState{w: w, cs: cs}
+	d.pointers = pointersMapGet()
+	defer pointersMapPut(d.pointers)
+
 	for _, arg := range a {
 		if arg == nil {
 			w.Write(interfaceBytes)
@@ -460,8 +484,10 @@ func fdump(cs *ConfigState, w io.Writer, a ...interface{}) {
 			continue
 		}
 
-		d := dumpState{w: w, cs: cs}
-		d.pointers = make(map[uintptr]int)
+		for k := range d.pointers {
+			delete(d.pointers, k)
+		}
+
 		d.dump(reflect.ValueOf(arg))
 		d.w.Write(newlineBytes)
 	}
