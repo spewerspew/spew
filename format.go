@@ -38,8 +38,8 @@ type formatState struct {
 	value          interface{}
 	fs             fmt.State
 	depth          int
-	pointers       map[uintptr]int
 	ignoreNextType bool
+	ci             *cycleInfo
 	cs             *ConfigState
 }
 
@@ -111,72 +111,34 @@ func (f *formatState) formatPtr(v reflect.Value) {
 		return
 	}
 
-	// Remove pointers at or below the current depth from map used to detect
-	// circular refs.
-	for k, depth := range f.pointers {
-		if depth >= f.depth {
-			delete(f.pointers, k)
-		}
-	}
-
-	// Keep list of all dereferenced pointers to possibly show later.
-	pointerChain := make([]uintptr, 0, 2)
-
 	// Figure out how many levels of indirection there are by derferencing
 	// pointers and unpacking interfaces down the chain while detecting circular
 	// references.
-	nilFound := false
-	cycleFound := false
-	indirects := 0
-	ve := v
-	for ve.Kind() == reflect.Ptr {
-		if ve.IsNil() {
-			nilFound = true
-			break
-		}
-		indirects++
-		addr := ve.Pointer()
-		pointerChain = append(pointerChain, addr)
-		if pd, ok := f.pointers[addr]; ok && pd < f.depth {
-			cycleFound = true
-			indirects--
-			break
-		}
-		f.pointers[addr] = f.depth
-
-		ve = ve.Elem()
-		if ve.Kind() == reflect.Interface {
-			if ve.IsNil() {
-				nilFound = true
-				break
-			}
-			ve = ve.Elem()
-		}
-	}
+	ve := derefPtr(v, f.depth, f.ci)
 
 	// Display type or indirection level depending on flags.
 	if showTypes && !f.ignoreNextType {
 		f.fs.Write(openParenBytes)
-		for i := 0; i < indirects; i++ {
+		for i := 0; i < f.ci.indirects; i++ {
 			f.fs.Write(asteriskBytes)
 		}
 		io.WriteString(f.fs, ve.Type().String())
 		f.fs.Write(closeParenBytes)
 	} else {
-		if nilFound || cycleFound {
-			indirects += strings.Count(ve.Type().String(), "*")
+		if f.ci.nilFound || f.ci.cycleFound {
+			f.ci.indirects += strings.Count(ve.Type().String(), "*")
 		}
 		f.fs.Write(openAngleBytes)
-		for i := 0; i < indirects; i++ {
+		for i := 0; i < f.ci.indirects; i++ {
 			io.WriteString(f.fs, "*")
 		}
 		f.fs.Write(closeAngleBytes)
 	}
 
 	// Display pointer information depending on flags.
-	if f.fs.Flag('+') && (len(pointerChain) > 0) {
+	if f.fs.Flag('+') && (len(f.ci.pointerChain) > 0) {
 		f.fs.Write(openParenBytes)
-		for i, addr := range pointerChain {
+		for i, addr := range f.ci.pointerChain {
 			if i > 0 {
 				f.fs.Write(pointerChainBytes)
 			}
@@ -187,10 +149,10 @@ func (f *formatState) formatPtr(v reflect.Value) {
 
 	// Display dereferenced value.
 	switch {
-	case nilFound:
+	case f.ci.nilFound:
 		f.fs.Write(nilAngleBytes)
 
-	case cycleFound:
+	case f.ci.cycleFound:
 		f.fs.Write(circularShortBytes)
 
 	default:
@@ -391,13 +353,11 @@ func (f *formatState) Format(fs fmt.State, verb rune) {
 		return
 	}
 
-	f.pointers = pointersMapGet()
+	f.ci = cycleInfoGet()
 	defer func() {
-		m := f.pointers
-		f.pointers = nil
-		pointersMapPut(m)
+		cycleInfoPut(f.ci)
+		f.ci = nil
 	}()
-
 	f.format(reflect.ValueOf(f.value))
 }
 
@@ -437,6 +397,7 @@ func NewFormatter(v interface{}) fmt.Formatter {
 
 var formattersPool sync.Pool
 
+func formattersPut(pv interface{}) { formattersPool.Put(pv) }
 func formattersGet(cs *ConfigState, args []interface{}) (pv interface{}, formatters []interface{}) {
 	pv = formattersPool.Get()
 	if pv != nil {
@@ -460,8 +421,4 @@ func formattersGet(cs *ConfigState, args []interface{}) (pv interface{}, formatt
 		formatters[i].(*formatState).Reset(cs, arg)
 	}
 	return pv, formatters
-}
-
-func formattersPut(pv interface{}) {
-	formattersPool.Put(pv)
 }

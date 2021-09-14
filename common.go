@@ -67,7 +67,7 @@ var (
 )
 
 // hexDigits is used to map a decimal value to a hex digit.
-var hexDigits = "0123456789abcdef"
+const hexDigits = "0123456789abcdef"
 
 // catchPanic handles any panics that might occur during the handleMethods
 // calls.
@@ -248,6 +248,91 @@ func printHexPtrBufGet() *[18]byte {
 	return printHexPtrBufPool.Get().(*[18]byte)
 }
 
+// cycleInfo stores circular pointer information.
+type cycleInfo struct {
+	pointers     map[uintptr]int
+	pointerChain []uintptr
+	nilFound     bool
+	cycleFound   bool
+	indirects    int
+}
+
+func (ci *cycleInfo) Reset() {
+	if ci == nil {
+		return
+	}
+	for k := range ci.pointers {
+		delete(ci.pointers, k)
+	}
+	*ci = cycleInfo{
+		pointers:     ci.pointers,
+		pointerChain: ci.pointerChain[:0],
+	}
+}
+
+var cycleInfoPool = sync.Pool{New: func() interface{} {
+	return &cycleInfo{pointers: make(map[uintptr]int)}
+}}
+
+func cycleInfoGet() *cycleInfo {
+	ci := cycleInfoPool.Get().(*cycleInfo)
+	ci.Reset()
+	return ci
+}
+
+func cycleInfoPut(ci *cycleInfo) {
+	if ci != nil {
+		cycleInfoPool.Put(ci)
+	}
+}
+
+// derefPtr dereferences a pointer and unpacks interfaces down
+// the chain while detecting circular references.
+func derefPtr(v reflect.Value, depth int, ci *cycleInfo) reflect.Value {
+	ci.pointerChain = ci.pointerChain[:0]
+
+	// Remove pointers at or below the current depth from map used to detect
+	// circular refs.
+	for k, d := range ci.pointers {
+		if d >= depth {
+			delete(ci.pointers, k)
+		}
+	}
+
+	// Figure out how many levels of indirection there are by dereferencing
+	// pointers and unpacking interfaces down the chain while detecting circular
+	// references.
+	ci.nilFound = false
+	ci.cycleFound = false
+	ci.indirects = 0
+	ve := v
+	for ve.Kind() == reflect.Ptr {
+		if ve.IsNil() {
+			ci.nilFound = true
+			break
+		}
+		ci.indirects++
+		addr := ve.Pointer()
+		ci.pointerChain = append(ci.pointerChain, addr)
+		if pd, ok := ci.pointers[addr]; ok && pd < depth {
+			ci.cycleFound = true
+			ci.indirects--
+			break
+		}
+		ci.pointers[addr] = depth
+
+		ve = ve.Elem()
+		if ve.Kind() == reflect.Interface {
+			if ve.IsNil() {
+				ci.nilFound = true
+				break
+			}
+			ve = ve.Elem()
+		}
+	}
+	return ve
+}
+
 // valuesSorter implements sort.Interface to allow a slice of reflect.Value
 // elements to be sorted.
 type valuesSorter struct {
@@ -372,21 +457,6 @@ func sortValues(values []reflect.Value, cs *ConfigState) {
 		return
 	}
 	sort.Sort(newValuesSorter(values, cs))
-}
-
-var pointersMapPool = sync.Pool{
-	New: func() interface{} {
-		return make(map[uintptr]int)
-	},
-}
-
-func pointersMapPut(m map[uintptr]int) { pointersMapPool.Put(m) }
-func pointersMapGet() map[uintptr]int {
-	m := pointersMapPool.Get().(map[uintptr]int)
-	for k := range m {
-		delete(m, k)
-	}
-	return m
 }
 
 var bytesBufferPool = sync.Pool{

@@ -23,6 +23,8 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
+	"sync"
 )
 
 var (
@@ -44,13 +46,22 @@ var (
 	cUint8tCharRE = regexp.MustCompile(`^.*\._Ctype_uint8_t$`)
 )
 
+// indentCacheKey is used as key in the indent cache.
+type indentCacheKey struct {
+	indent string
+	depth  int
+}
+
+// indentCache is a cache that caches indents of different lengths.
+var indentCache sync.Map // map[indentCacheKey]string
+
 // dumpState contains information about the state of a dump operation.
 type dumpState struct {
 	w                io.Writer
 	depth            int
-	pointers         map[uintptr]int
 	ignoreNextType   bool
 	ignoreNextIndent bool
+	ci               *cycleInfo
 	cs               *ConfigState
 }
 
@@ -78,61 +89,23 @@ func (d *dumpState) unpackValue(v reflect.Value) reflect.Value {
 
 // dumpPtr handles formatting of pointers by indirecting them as necessary.
 func (d *dumpState) dumpPtr(v reflect.Value) {
-	// Remove pointers at or below the current depth from map used to detect
-	// circular refs.
-	for k, depth := range d.pointers {
-		if depth >= d.depth {
-			delete(d.pointers, k)
-		}
-	}
-
-	// Keep list of all dereferenced pointers to show later.
-	pointerChain := make([]uintptr, 0, 2)
-
 	// Figure out how many levels of indirection there are by dereferencing
 	// pointers and unpacking interfaces down the chain while detecting circular
 	// references.
-	nilFound := false
-	cycleFound := false
-	indirects := 0
-	ve := v
-	for ve.Kind() == reflect.Ptr {
-		if ve.IsNil() {
-			nilFound = true
-			break
-		}
-		indirects++
-		addr := ve.Pointer()
-		pointerChain = append(pointerChain, addr)
-		if pd, ok := d.pointers[addr]; ok && pd < d.depth {
-			cycleFound = true
-			indirects--
-			break
-		}
-		d.pointers[addr] = d.depth
-
-		ve = ve.Elem()
-		if ve.Kind() == reflect.Interface {
-			if ve.IsNil() {
-				nilFound = true
-				break
-			}
-			ve = ve.Elem()
-		}
-	}
+	ve := derefPtr(v, d.depth, d.ci)
 
 	// Display type information.
 	d.w.Write(openParenBytes)
-	for i := 0; i < indirects; i++ {
+	for i := 0; i < d.ci.indirects; i++ {
 		d.w.Write(asteriskBytes)
 	}
 	io.WriteString(d.w, ve.Type().String())
 	d.w.Write(closeParenBytes)
 
 	// Display pointer information.
-	if !d.cs.DisablePointerAddresses && len(pointerChain) > 0 {
+	if !d.cs.DisablePointerAddresses && len(d.ci.pointerChain) > 0 {
 		d.w.Write(openParenBytes)
-		for i, addr := range pointerChain {
+		for i, addr := range d.ci.pointerChain {
 			if i > 0 {
 				d.w.Write(pointerChainBytes)
 			}
@@ -144,10 +117,10 @@ func (d *dumpState) dumpPtr(v reflect.Value) {
 	// Display dereferenced value.
 	d.w.Write(openParenBytes)
 	switch {
-	case nilFound:
+	case d.ci.nilFound:
 		d.w.Write(nilAngleBytes)
 
-	case cycleFound:
+	case d.ci.cycleFound:
 		d.w.Write(circularBytes)
 
 	default:
@@ -226,26 +199,15 @@ func (d *dumpState) dumpSlice(v reflect.Value) {
 
 	// Hexdump the entire slice as needed.
 	if doHexDump {
-		b := bytesBufferGet()
-		defer bytesBufferPut(b)
-
-		for i := 0; i < d.depth; i++ {
-			b.WriteString(d.cs.Indent)
+		var indent string
+		key := indentCacheKey{d.cs.Indent, d.depth}
+		if cv, ok := indentCache.Load(key); ok {
+			indent = cv.(string)
+		} else {
+			indent = strings.Repeat(d.cs.Indent, d.depth)
+			indentCache.Store(key, indent)
 		}
-
-		indent := b.String()
-		b.Reset()
-
-		// hexDump will write 79 bytes per complete 16 byte chunk plus,
-		// the indent and at least 64 bytes for whatever remains. Round
-		// the allocation up, since only a maximum of 15 bytes will be
-		// wasted.
-		n := (1 + ((len(buf) - 1) / 16)) * (79 + len(d.cs.Indent)*d.depth)
-		b.Grow(n)
-
-		hexDump(b, buf, indent)
-
-		io.Copy(d.w, b)
+		hexDump(d.w, buf, indent)
 		return
 	}
 
@@ -470,8 +432,8 @@ func (d *dumpState) dump(v reflect.Value) {
 // methods which take varying writers and config states.
 func fdump(cs *ConfigState, w io.Writer, a ...interface{}) {
 	d := dumpState{w: w, cs: cs}
-	d.pointers = pointersMapGet()
-	defer pointersMapPut(d.pointers)
+	d.ci = cycleInfoGet()
+	defer cycleInfoPut(d.ci)
 
 	for _, arg := range a {
 		if arg == nil {
@@ -482,8 +444,8 @@ func fdump(cs *ConfigState, w io.Writer, a ...interface{}) {
 			continue
 		}
 
-		for k := range d.pointers {
-			delete(d.pointers, k)
+		for k := range d.ci.pointers {
+			delete(d.ci.pointers, k)
 		}
 
 		d.dump(reflect.ValueOf(arg))
