@@ -18,7 +18,6 @@
 package spew
 
 import (
-	"fmt"
 	"io"
 	"reflect"
 	"regexp"
@@ -277,163 +276,100 @@ func (d *dumpState) dump(v reflect.Value) {
 		d.w.Write(spaceBytes)
 	}
 
-	// Call Stringer/error interfaces if they exist and the handle methods flag
-	// is enabled
-	if !d.cs.DisableMethods {
-		if (kind != reflect.Invalid) && (kind != reflect.Interface) {
-			if handled := handleMethods(d.cs, d.w, v); handled {
-				return
+	printValue(d.w, d, v, kind, d.cs)
+}
+
+func (d *dumpState) printArray(v reflect.Value) {
+	d.w.Write(openBraceNewlineBytes)
+	d.depth++
+	if (d.cs.MaxDepth != 0) && (d.depth > d.cs.MaxDepth) {
+		d.indent()
+		d.w.Write(maxNewlineBytes)
+	} else {
+		d.dumpSlice(v)
+	}
+	d.depth--
+	d.indent()
+	d.w.Write(closeBraceBytes)
+}
+
+func (d *dumpState) printString(v reflect.Value) {
+	b := bufferGet()
+	defer bufferPut(b)
+	b.SetBytes(strconv.AppendQuote(b.Bytes(), v.String()))
+	d.w.Write(b.Bytes())
+}
+
+func (d *dumpState) printMap(v reflect.Value) {
+	d.w.Write(openBraceNewlineBytes)
+	d.depth++
+	if (d.cs.MaxDepth != 0) && (d.depth > d.cs.MaxDepth) {
+		d.indent()
+		d.w.Write(maxNewlineBytes)
+	} else {
+		numEntries := v.Len()
+		keys := v.MapKeys()
+		if d.cs.SortKeys {
+			sortValues(keys, d.cs)
+		}
+		for i, key := range keys {
+			d.dump(d.unpackValue(key))
+			d.w.Write(colonSpaceBytes)
+			d.ignoreNextIndent = true
+			d.dump(d.unpackValue(v.MapIndex(key)))
+			if i < (numEntries - 1) {
+				d.w.Write(commaNewlineBytes)
+			} else {
+				d.w.Write(newlineBytes)
 			}
 		}
 	}
+	d.depth--
+	d.indent()
+	d.w.Write(closeBraceBytes)
+}
 
-	switch kind {
-	case reflect.Invalid:
-		// Do nothing.  We should never get here since invalid has already
-		// been handled above.
-
-	case reflect.Bool:
-		printBool(d.w, v.Bool())
-
-	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-		printInt(d.w, v.Int(), 10)
-
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-		printUint(d.w, v.Uint(), 10)
-
-	case reflect.Float32:
-		printFloat(d.w, v.Float(), 32)
-
-	case reflect.Float64:
-		printFloat(d.w, v.Float(), 64)
-
-	case reflect.Complex64:
-		printComplex(d.w, v.Complex(), 32)
-
-	case reflect.Complex128:
-		printComplex(d.w, v.Complex(), 64)
-
-	case reflect.Slice:
-		if v.IsNil() {
-			d.w.Write(nilAngleBytes)
-			break
-		}
-		fallthrough
-
-	case reflect.Array:
-		d.w.Write(openBraceNewlineBytes)
-		d.depth++
-		if (d.cs.MaxDepth != 0) && (d.depth > d.cs.MaxDepth) {
-			d.indent()
-			d.w.Write(maxNewlineBytes)
-		} else {
-			d.dumpSlice(v)
-		}
-		d.depth--
+func (d *dumpState) printStruct(v reflect.Value) {
+	d.w.Write(openBraceNewlineBytes)
+	d.depth++
+	if (d.cs.MaxDepth != 0) && (d.depth > d.cs.MaxDepth) {
 		d.indent()
-		d.w.Write(closeBraceBytes)
-
-	case reflect.String:
-		pv, buf := strconvBufPoolGet()
-		defer strconvBufPool.Put(pv)
-		d.w.Write(strconv.AppendQuote(buf, v.String()))
-
-	case reflect.Interface:
-		// The only time we should get here is for nil interfaces due to
-		// unpackValue calls.
-		if v.IsNil() {
-			d.w.Write(nilAngleBytes)
-		}
-
-	case reflect.Ptr:
-		// Do nothing.  We should never get here since pointers have already
-		// been handled above.
-
-	case reflect.Map:
-		// nil maps should be indicated as different than empty maps
-		if v.IsNil() {
-			d.w.Write(nilAngleBytes)
-			break
-		}
-
-		d.w.Write(openBraceNewlineBytes)
-		d.depth++
-		if (d.cs.MaxDepth != 0) && (d.depth > d.cs.MaxDepth) {
+		d.w.Write(maxNewlineBytes)
+	} else {
+		vt := v.Type()
+		numFields := v.NumField()
+		for i := 0; i < numFields; i++ {
 			d.indent()
-			d.w.Write(maxNewlineBytes)
-		} else {
-			numEntries := v.Len()
-			keys := v.MapKeys()
-			if d.cs.SortKeys {
-				sortValues(keys, d.cs)
+			vtf := vt.Field(i)
+			io.WriteString(d.w, vtf.Name)
+			d.w.Write(colonSpaceBytes)
+			d.ignoreNextIndent = true
+			d.dump(d.unpackValue(v.Field(i)))
+			if i < (numFields - 1) {
+				d.w.Write(commaNewlineBytes)
+			} else {
+				d.w.Write(newlineBytes)
 			}
-			for i, key := range keys {
-				d.dump(d.unpackValue(key))
-				d.w.Write(colonSpaceBytes)
-				d.ignoreNextIndent = true
-				d.dump(d.unpackValue(v.MapIndex(key)))
-				if i < (numEntries - 1) {
-					d.w.Write(commaNewlineBytes)
-				} else {
-					d.w.Write(newlineBytes)
-				}
-			}
-		}
-		d.depth--
-		d.indent()
-		d.w.Write(closeBraceBytes)
-
-	case reflect.Struct:
-		d.w.Write(openBraceNewlineBytes)
-		d.depth++
-		if (d.cs.MaxDepth != 0) && (d.depth > d.cs.MaxDepth) {
-			d.indent()
-			d.w.Write(maxNewlineBytes)
-		} else {
-			vt := v.Type()
-			numFields := v.NumField()
-			for i := 0; i < numFields; i++ {
-				d.indent()
-				vtf := vt.Field(i)
-				io.WriteString(d.w, vtf.Name)
-				d.w.Write(colonSpaceBytes)
-				d.ignoreNextIndent = true
-				d.dump(d.unpackValue(v.Field(i)))
-				if i < (numFields - 1) {
-					d.w.Write(commaNewlineBytes)
-				} else {
-					d.w.Write(newlineBytes)
-				}
-			}
-		}
-		d.depth--
-		d.indent()
-		d.w.Write(closeBraceBytes)
-
-	case reflect.Uintptr:
-		printHexPtr(d.w, uintptr(v.Uint()))
-
-	case reflect.UnsafePointer, reflect.Chan, reflect.Func:
-		printHexPtr(d.w, v.Pointer())
-
-	// There were not any other types at the time this code was written, but
-	// fall back to letting the default fmt package handle it in case any new
-	// types are added.
-	default:
-		if v.CanInterface() {
-			fmt.Fprintf(d.w, "%v", v.Interface())
-		} else {
-			fmt.Fprintf(d.w, "%v", v.String())
 		}
 	}
+	d.depth--
+	d.indent()
+	d.w.Write(closeBraceBytes)
+}
+
+func (d *dumpState) defaultFormat() string {
+	return "%v"
+}
+
+func (d *dumpState) Reset(w io.Writer, cs *ConfigState) {
+	*d = dumpState{w: w, ci: d.ci, cs: cs}
 }
 
 // fdump is a helper function to consolidate the logic from the various public
 // methods which take varying writers and config states.
 func fdump(cs *ConfigState, w io.Writer, a ...interface{}) {
-	d := dumpState{w: w, cs: cs}
-	d.ci = cycleInfoGet()
-	defer cycleInfoPut(d.ci)
+	d := dumpStateGet(w, cs)
+	defer dumpStatePut(d)
 
 	for _, arg := range a {
 		if arg == nil {
@@ -451,4 +387,21 @@ func fdump(cs *ConfigState, w io.Writer, a ...interface{}) {
 		d.dump(reflect.ValueOf(arg))
 		d.w.Write(newlineBytes)
 	}
+}
+
+var dumpStatePool = sync.Pool{New: func() interface{} {
+	return new(dumpState)
+}}
+
+func dumpStateGet(w io.Writer, cs *ConfigState) *dumpState {
+	d := dumpStatePool.Get().(*dumpState)
+	d.ci = cycleInfoGet()
+	d.Reset(w, cs)
+	return d
+}
+
+func dumpStatePut(d *dumpState) {
+	cycleInfoPut(d.ci)
+	d.ci = nil
+	dumpStatePool.Put(d)
 }

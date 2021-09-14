@@ -141,66 +141,77 @@ func handleMethods(cs *ConfigState, w io.Writer, v reflect.Value) (handled bool)
 	return false
 }
 
-// printBool outputs a boolean value as true or false to Writer w.
-func printBool(w io.Writer, val bool) {
-	if val {
-		w.Write(trueBytes)
-	} else {
-		w.Write(falseBytes)
-	}
-}
-
 // printInt outputs a signed integer value to Writer w.
 func printInt(w io.Writer, val int64, base int) {
-	pv, buf := strconvBufPoolGet()
-	defer strconvBufPool.Put(pv)
-	w.Write(strconv.AppendInt(buf, val, base))
+	b := bufferGet()
+	defer bufferPool.Put(b)
+	b.SetBytes(strconv.AppendInt(b.Bytes(), val, base))
+	w.Write(b.Bytes())
 }
 
 // printUint outputs an unsigned integer value to Writer w.
 func printUint(w io.Writer, val uint64, base int) {
-	pv, buf := strconvBufPoolGet()
-	defer strconvBufPool.Put(pv)
-	w.Write(strconv.AppendUint(buf, val, base))
+	b := bufferGet()
+	defer bufferPool.Put(b)
+	b.SetBytes(strconv.AppendUint(b.Bytes(), val, base))
+	w.Write(b.Bytes())
 }
 
 // printFloat outputs a floating point value using the specified precision,
 // which is expected to be 32 or 64bit, to Writer w.
 func printFloat(w io.Writer, val float64, precision int) {
-	pv, buf := strconvBufPoolGet()
-	defer strconvBufPool.Put(pv)
-	w.Write(strconv.AppendFloat(buf, val, 'g', -1, precision))
+	b := bufferGet()
+	defer bufferPool.Put(b)
+	b.SetBytes(strconv.AppendFloat(b.Bytes(), val, 'g', -1, precision))
+	w.Write(b.Bytes())
 }
 
 // printComplex outputs a complex value using the specified float precision
 // for the real and imaginary parts to Writer w.
 func printComplex(w io.Writer, c complex128, floatPrecision int) {
-	pv, buf := strconvBufPoolGet()
-	defer strconvBufPool.Put(pv)
+	b := bufferGet()
+	defer bufferPool.Put(b)
 	r := real(c)
 	w.Write(openParenBytes)
-	w.Write(strconv.AppendFloat(buf, r, 'g', -1, floatPrecision))
+	b.SetBytes(strconv.AppendFloat(b.Bytes(), r, 'g', -1, floatPrecision))
+	w.Write(b.Bytes())
 	i := imag(c)
 	if i >= 0 {
 		w.Write(plusBytes)
 	}
-	buf = buf[:0]
-	w.Write(strconv.AppendFloat(buf, i, 'g', -1, floatPrecision))
+	b.Reset()
+	b.SetBytes(strconv.AppendFloat(b.Bytes(), i, 'g', -1, floatPrecision))
+	w.Write(b.Bytes())
 	w.Write(iBytes)
 	w.Write(closeParenBytes)
 }
 
-var strconvBufPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 0, 64)
-	},
+type buffer struct {
+	buf []byte
 }
 
-func strconvBufPoolGet() (interface{}, []byte) {
-	pv := strconvBufPool.Get()
-	buf := pv.([]byte)
-	buf = buf[:0]
-	return pv, buf
+func (b *buffer) Bytes() []byte     { return b.buf }
+func (b *buffer) SetBytes(p []byte) { b.buf = p }
+func (b *buffer) Reset()            { b.buf = b.buf[:0] }
+func (b *buffer) Grow(n int) {
+	if l := len(b.buf); n < cap(b.buf)-l {
+		b.buf = b.buf[:l+n]
+	} else {
+		buf := make([]byte, l+n)
+		copy(buf, b.buf)
+		b.buf = buf
+	}
+}
+
+var bufferPool = sync.Pool{New: func() interface{} {
+	return new(buffer)
+}}
+
+func bufferPut(b *buffer) { bufferPool.Put(b) }
+func bufferGet() *buffer {
+	b := bufferPool.Get().(*buffer)
+	b.Reset()
+	return b
 }
 
 // printHexPtr outputs a uintptr formatted as hexadecimal with a leading '0x'
@@ -214,8 +225,10 @@ func printHexPtr(w io.Writer, p uintptr) {
 	}
 
 	// Max uint64 is 16 bytes in hex + 2 bytes for '0x' prefix
-	buf := printHexPtrBufGet() // *[18]byte
-	defer printHexPtrBufPut(buf)
+	b := bufferGet()
+	defer bufferPut(b)
+	b.Grow(18)
+	buf := b.Bytes()
 
 	// It's simpler to construct the hex string right to left.
 	base := uint64(16)
@@ -237,17 +250,6 @@ func printHexPtr(w io.Writer, p uintptr) {
 	w.Write(buf[i:])
 }
 
-var printHexPtrBufPool = sync.Pool{
-	New: func() interface{} {
-		return new([18]byte)
-	},
-}
-
-func printHexPtrBufPut(buf *[18]byte) { printHexPtrBufPool.Put(buf) }
-func printHexPtrBufGet() *[18]byte {
-	return printHexPtrBufPool.Get().(*[18]byte)
-}
-
 // cycleInfo stores circular pointer information.
 type cycleInfo struct {
 	pointers     map[uintptr]int
@@ -258,9 +260,6 @@ type cycleInfo struct {
 }
 
 func (ci *cycleInfo) Reset() {
-	if ci == nil {
-		return
-	}
 	for k := range ci.pointers {
 		delete(ci.pointers, k)
 	}
@@ -274,16 +273,11 @@ var cycleInfoPool = sync.Pool{New: func() interface{} {
 	return &cycleInfo{pointers: make(map[uintptr]int)}
 }}
 
+func cycleInfoPut(ci *cycleInfo) { cycleInfoPool.Put(ci) }
 func cycleInfoGet() *cycleInfo {
 	ci := cycleInfoPool.Get().(*cycleInfo)
 	ci.Reset()
 	return ci
-}
-
-func cycleInfoPut(ci *cycleInfo) {
-	if ci != nil {
-		cycleInfoPool.Put(ci)
-	}
 }
 
 // derefPtr dereferences a pointer and unpacks interfaces down
@@ -331,6 +325,108 @@ func derefPtr(v reflect.Value, depth int, ci *cycleInfo) reflect.Value {
 		}
 	}
 	return ve
+}
+
+type printer interface {
+	printArray(v reflect.Value)
+	printString(v reflect.Value)
+	printMap(v reflect.Value)
+	printStruct(v reflect.Value)
+	defaultFormat() string
+}
+
+func printValue(w io.Writer, p printer, v reflect.Value, kind reflect.Kind, cs *ConfigState) {
+	// Call Stringer/error interfaces if they exist and the handle methods
+	// flag is enabled.
+	if !cs.DisableMethods {
+		if kind != reflect.Invalid && kind != reflect.Interface {
+			if handled := handleMethods(cs, w, v); handled {
+				return
+			}
+		}
+	}
+
+	switch kind {
+	case reflect.Invalid:
+		// Do nothing.  We should never get here since invalid has already
+		// been handled before.
+
+	case reflect.Bool:
+		if v.Bool() {
+			w.Write(trueBytes)
+		} else {
+			w.Write(falseBytes)
+		}
+
+	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
+		printInt(w, v.Int(), 10)
+
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
+		printUint(w, v.Uint(), 10)
+
+	case reflect.Float32:
+		printFloat(w, v.Float(), 32)
+
+	case reflect.Float64:
+		printFloat(w, v.Float(), 64)
+
+	case reflect.Complex64:
+		printComplex(w, v.Complex(), 32)
+
+	case reflect.Complex128:
+		printComplex(w, v.Complex(), 64)
+
+	case reflect.Slice:
+		if v.IsNil() {
+			w.Write(nilAngleBytes)
+			break
+		}
+		fallthrough
+
+	case reflect.Array:
+		p.printArray(v)
+
+	case reflect.String:
+		p.printString(v)
+
+	case reflect.Interface:
+		// The only time we should get here is for nil interfaces due to
+		// unpackValue calls.
+		if v.IsNil() {
+			w.Write(nilAngleBytes)
+		}
+
+	case reflect.Ptr:
+		// Do nothing.  We should never get here since pointers have already
+		// been handled above.
+
+	case reflect.Map:
+		// nil maps should be indicated as different than empty maps
+		if v.IsNil() {
+			w.Write(nilAngleBytes)
+			break
+		}
+		p.printMap(v)
+
+	case reflect.Struct:
+		p.printStruct(v)
+
+	case reflect.Uintptr:
+		printHexPtr(w, uintptr(v.Uint()))
+
+	case reflect.UnsafePointer, reflect.Chan, reflect.Func:
+		printHexPtr(w, v.Pointer())
+
+	// There were not any other types at the time this code was written, but
+	// fall back to letting the default fmt package handle it if any get added.
+	default:
+		format := p.defaultFormat()
+		if v.CanInterface() {
+			fmt.Fprintf(w, format, v.Interface())
+		} else {
+			fmt.Fprintf(w, format, v.String())
+		}
+	}
 }
 
 // valuesSorter implements sort.Interface to allow a slice of reflect.Value
@@ -459,11 +555,9 @@ func sortValues(values []reflect.Value, cs *ConfigState) {
 	sort.Sort(newValuesSorter(values, cs))
 }
 
-var bytesBufferPool = sync.Pool{
-	New: func() interface{} {
-		return new(bytes.Buffer)
-	},
-}
+var bytesBufferPool = sync.Pool{New: func() interface{} {
+	return new(bytes.Buffer)
+}}
 
 func bytesBufferPut(b *bytes.Buffer) { bytesBufferPool.Put(b) }
 func bytesBufferGet() *bytes.Buffer {

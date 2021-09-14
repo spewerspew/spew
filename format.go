@@ -18,7 +18,6 @@
 package spew
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"reflect"
@@ -48,7 +47,8 @@ type formatState struct {
 // unrecognized type.  Unless new types are added to the language, this
 // function won't ever be called.
 func (f *formatState) buildDefaultFormat() (format string) {
-	var buf bytes.Buffer
+	buf := bytesBufferGet()
+	defer bytesBufferPut(buf)
 	buf.Write(percentBytes)
 
 	for _, flag := range supportedFlags {
@@ -65,7 +65,8 @@ func (f *formatState) buildDefaultFormat() (format string) {
 // and width information to pass along to the standard fmt package.  This allows
 // automatic deferral of all format strings this package doesn't support.
 func (f *formatState) constructOrigFormat(verb rune) (format string) {
-	var buf bytes.Buffer
+	buf := bytesBufferGet()
+	defer bytesBufferPut(buf)
 	buf.Write(percentBytes)
 
 	for _, flag := range supportedFlags {
@@ -187,150 +188,7 @@ func (f *formatState) format(v reflect.Value) {
 	}
 	f.ignoreNextType = false
 
-	// Call Stringer/error interfaces if they exist and the handle methods
-	// flag is enabled.
-	if !f.cs.DisableMethods {
-		if (kind != reflect.Invalid) && (kind != reflect.Interface) {
-			if handled := handleMethods(f.cs, f.fs, v); handled {
-				return
-			}
-		}
-	}
-
-	switch kind {
-	case reflect.Invalid:
-		// Do nothing.  We should never get here since invalid has already
-		// been handled above.
-
-	case reflect.Bool:
-		printBool(f.fs, v.Bool())
-
-	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-		printInt(f.fs, v.Int(), 10)
-
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-		printUint(f.fs, v.Uint(), 10)
-
-	case reflect.Float32:
-		printFloat(f.fs, v.Float(), 32)
-
-	case reflect.Float64:
-		printFloat(f.fs, v.Float(), 64)
-
-	case reflect.Complex64:
-		printComplex(f.fs, v.Complex(), 32)
-
-	case reflect.Complex128:
-		printComplex(f.fs, v.Complex(), 64)
-
-	case reflect.Slice:
-		if v.IsNil() {
-			f.fs.Write(nilAngleBytes)
-			break
-		}
-		fallthrough
-
-	case reflect.Array:
-		f.fs.Write(openBracketBytes)
-		f.depth++
-		if (f.cs.MaxDepth != 0) && (f.depth > f.cs.MaxDepth) {
-			f.fs.Write(maxShortBytes)
-		} else {
-			numEntries := v.Len()
-			for i := 0; i < numEntries; i++ {
-				if i > 0 {
-					f.fs.Write(spaceBytes)
-				}
-				f.ignoreNextType = true
-				f.format(f.unpackValue(v.Index(i)))
-			}
-		}
-		f.depth--
-		f.fs.Write(closeBracketBytes)
-
-	case reflect.String:
-		io.WriteString(f.fs, v.String())
-
-	case reflect.Interface:
-		// The only time we should get here is for nil interfaces due to
-		// unpackValue calls.
-		if v.IsNil() {
-			f.fs.Write(nilAngleBytes)
-		}
-
-	case reflect.Ptr:
-		// Do nothing.  We should never get here since pointers have already
-		// been handled above.
-
-	case reflect.Map:
-		// nil maps should be indicated as different than empty maps
-		if v.IsNil() {
-			f.fs.Write(nilAngleBytes)
-			break
-		}
-
-		f.fs.Write(openMapBytes)
-		f.depth++
-		if (f.cs.MaxDepth != 0) && (f.depth > f.cs.MaxDepth) {
-			f.fs.Write(maxShortBytes)
-		} else {
-			keys := v.MapKeys()
-			if f.cs.SortKeys {
-				sortValues(keys, f.cs)
-			}
-			for i, key := range keys {
-				if i > 0 {
-					f.fs.Write(spaceBytes)
-				}
-				f.ignoreNextType = true
-				f.format(f.unpackValue(key))
-				f.fs.Write(colonBytes)
-				f.ignoreNextType = true
-				f.format(f.unpackValue(v.MapIndex(key)))
-			}
-		}
-		f.depth--
-		f.fs.Write(closeMapBytes)
-
-	case reflect.Struct:
-		numFields := v.NumField()
-		f.fs.Write(openBraceBytes)
-		f.depth++
-		if (f.cs.MaxDepth != 0) && (f.depth > f.cs.MaxDepth) {
-			f.fs.Write(maxShortBytes)
-		} else {
-			vt := v.Type()
-			for i := 0; i < numFields; i++ {
-				if i > 0 {
-					f.fs.Write(spaceBytes)
-				}
-				vtf := vt.Field(i)
-				if f.fs.Flag('+') || f.fs.Flag('#') {
-					io.WriteString(f.fs, vtf.Name)
-					f.fs.Write(colonBytes)
-				}
-				f.format(f.unpackValue(v.Field(i)))
-			}
-		}
-		f.depth--
-		f.fs.Write(closeBraceBytes)
-
-	case reflect.Uintptr:
-		printHexPtr(f.fs, uintptr(v.Uint()))
-
-	case reflect.UnsafePointer, reflect.Chan, reflect.Func:
-		printHexPtr(f.fs, v.Pointer())
-
-	// There were not any other types at the time this code was written, but
-	// fall back to letting the default fmt package handle it if any get added.
-	default:
-		format := f.buildDefaultFormat()
-		if v.CanInterface() {
-			fmt.Fprintf(f.fs, format, v.Interface())
-		} else {
-			fmt.Fprintf(f.fs, format, v.String())
-		}
-	}
+	printValue(f.fs, f, v, kind, f.cs)
 }
 
 // Format satisfies the fmt.Formatter interface. See NewFormatter for usage
@@ -359,6 +217,82 @@ func (f *formatState) Format(fs fmt.State, verb rune) {
 		f.ci = nil
 	}()
 	f.format(reflect.ValueOf(f.value))
+}
+
+func (f *formatState) printArray(v reflect.Value) {
+	f.fs.Write(openBracketBytes)
+	f.depth++
+	if (f.cs.MaxDepth != 0) && (f.depth > f.cs.MaxDepth) {
+		f.fs.Write(maxShortBytes)
+	} else {
+		numEntries := v.Len()
+		for i := 0; i < numEntries; i++ {
+			if i > 0 {
+				f.fs.Write(spaceBytes)
+			}
+			f.ignoreNextType = true
+			f.format(f.unpackValue(v.Index(i)))
+		}
+	}
+	f.depth--
+	f.fs.Write(closeBracketBytes)
+}
+
+func (f *formatState) printString(v reflect.Value) {
+	io.WriteString(f.fs, v.String())
+}
+
+func (f *formatState) printMap(v reflect.Value) {
+	f.fs.Write(openMapBytes)
+	f.depth++
+	if (f.cs.MaxDepth != 0) && (f.depth > f.cs.MaxDepth) {
+		f.fs.Write(maxShortBytes)
+	} else {
+		keys := v.MapKeys()
+		if f.cs.SortKeys {
+			sortValues(keys, f.cs)
+		}
+		for i, key := range keys {
+			if i > 0 {
+				f.fs.Write(spaceBytes)
+			}
+			f.ignoreNextType = true
+			f.format(f.unpackValue(key))
+			f.fs.Write(colonBytes)
+			f.ignoreNextType = true
+			f.format(f.unpackValue(v.MapIndex(key)))
+		}
+	}
+	f.depth--
+	f.fs.Write(closeMapBytes)
+}
+
+func (f *formatState) printStruct(v reflect.Value) {
+	numFields := v.NumField()
+	f.fs.Write(openBraceBytes)
+	f.depth++
+	if (f.cs.MaxDepth != 0) && (f.depth > f.cs.MaxDepth) {
+		f.fs.Write(maxShortBytes)
+	} else {
+		vt := v.Type()
+		for i := 0; i < numFields; i++ {
+			if i > 0 {
+				f.fs.Write(spaceBytes)
+			}
+			vtf := vt.Field(i)
+			if f.fs.Flag('+') || f.fs.Flag('#') {
+				io.WriteString(f.fs, vtf.Name)
+				f.fs.Write(colonBytes)
+			}
+			f.format(f.unpackValue(v.Field(i)))
+		}
+	}
+	f.depth--
+	f.fs.Write(closeBraceBytes)
+}
+
+func (f *formatState) defaultFormat() string {
+	return f.buildDefaultFormat()
 }
 
 // newFormatter is a helper function to consolidate the logic from the various
