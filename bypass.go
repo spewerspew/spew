@@ -15,8 +15,8 @@
 
 // NOTE: Due to the following build constraints, this file will only be compiled
 // when the code is not running on Google App Engine, compiled by GopherJS, and
-// "-tags safe" is not added to the go build command line.  The "disableunsafe"
-// tag is deprecated and thus should not be used.
+// "-tags safe" or "-tags purego" is not added to the go build command line.
+// The "disableunsafe" tag is deprecated and thus should not be used.
 // Go versions prior to 1.4 are disabled because they use a different layout
 // for interfaces which make the implementation of unsafeReflectValue more complex.
 //go:build !js && !appengine && !safe && !purego && !disableunsafe && go1.4
