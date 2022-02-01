@@ -70,7 +70,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/dwlnetnl/spew"
+	"github.com/spewerspew/spew"
 )
 
 // dumpTest is used to describe a test to be performed against the Dump method.

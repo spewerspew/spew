@@ -74,7 +74,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/dwlnetnl/spew"
+	"github.com/spewerspew/spew"
 )
 
 // formatterTest is used to describe a test to be performed against NewFormatter.

@@ -15,16 +15,16 @@ post about it
 
 ## Documentation
 
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/dwlnetnl/spew)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/spewerspew/spew)
 
 Full `go doc` style documentation for the project can be viewed online without
 installing this package by using the excellent GoDoc site here:
-http://godoc.org/github.com/dwlnetnl/spew
+http://godoc.org/github.com/spewerspew/spew
 
 ## Installation
 
 ```bash
-$ go get -u github.com/dwlnetnl/spew
+$ go get -u github.com/spewerspew/spew
 ```
 
 ## Quick Start
@@ -32,7 +32,7 @@ $ go get -u github.com/dwlnetnl/spew
 Add this import line to the file you're working in:
 
 ```Go
-import "github.com/dwlnetnl/spew"
+import "github.com/spewerspew/spew"
 ```
 
 To dump a variable with full newlines, indentation, type, and pointer
@@ -68,7 +68,7 @@ import (
     "html"
     "net/http"
 
-    "github.com/dwlnetnl/spew"
+    "github.com/spewerspew/spew"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {

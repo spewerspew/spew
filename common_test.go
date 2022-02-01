@@ -23,7 +23,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/dwlnetnl/spew"
+	"github.com/spewerspew/spew"
 )
 
 // custom type to test Stinger interface on non-pointer receiver.

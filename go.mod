@@ -1,3 +1,3 @@
-module github.com/dwlnetnl/spew
+module github.com/spewerspew/spew
 
 go 1.17
